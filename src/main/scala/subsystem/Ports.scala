@@ -45,6 +45,13 @@ case class SlavePortParams(beatBytes: Int, idBits: Int, sourceBits: Int)
 case class MemoryPortParams(master: MasterPortParams, nMemoryChannels: Int, incohBase: Option[BigInt] = None)
 
 case object ExtMem extends Field[Option[MemoryPortParams]](None)
+
+/** Byte granularity at which `nMemoryChannels` AXI memory ports are striped.
+  * None keeps rocket-chip's historical behavior (interleave at MemoryBus.blockBytes).
+  * A power-of-two value >= blockBytes selects the same bit slice on every port,
+  * so an upstream cache banked at that granularity can be wired 1:1.
+  */
+case object MemoryChannelInterleaveBytes extends Field[Option[Int]](None)
 case object ExtBus extends Field[Option[MasterPortParams]](None)
 case object ExtIn extends Field[Option[SlavePortParams]](None)
 
@@ -61,7 +68,14 @@ trait CanHaveMasterAXI4MemPort { this: BaseSubsystem =>
   val memAXI4Node = AXI4SlaveNode(memPortParamsOpt.map({ case MemoryPortParams(memPortParams, nMemoryChannels, _) =>
     Seq.tabulate(nMemoryChannels) { channel =>
       val base = AddressSet.misaligned(memPortParams.base, memPortParams.size)
-      val filter = AddressSet(channel * mbus.blockBytes, ~((nMemoryChannels-1) * mbus.blockBytes))
+      val stripe = p(MemoryChannelInterleaveBytes).getOrElse(mbus.blockBytes)
+      require(stripe > 0 && (stripe & (stripe - 1)) == 0,
+        s"MemoryChannelInterleaveBytes must be a power of two, got $stripe")
+      require(stripe >= mbus.blockBytes,
+        s"MemoryChannelInterleaveBytes ($stripe) must be >= MemoryBus.blockBytes (${mbus.blockBytes})")
+      // Same mask shape as tilelink.BankBinder: port i owns addresses whose
+      // bits in [log2(stripe)+log2(n)-1 : log2(stripe)] equal i.
+      val filter = AddressSet(channel * stripe, ~((nMemoryChannels-1) * stripe))
 
       AXI4SlavePortParameters(
         slaves = Seq(AXI4SlaveParameters(
