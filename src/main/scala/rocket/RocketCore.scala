@@ -1261,7 +1261,9 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     }
   }
   else {
-    when (csr.io.trace(0).valid) {
+    val rocketCommitLog = PlusArg("rocket_commit_log", 0,
+      "1: print a line per committed Rocket instruction")
+    when (csr.io.trace(0).valid && rocketCommitLog =/= 0.U) {
       printf("C%d: %d [%d] pc=[%x] W[r%d=%x][%d] R[r%d=%x] R[r%d=%x] inst=[%x] DASM(%x)\n",
          io.hartid, coreMonitorBundle.timer, coreMonitorBundle.valid,
          coreMonitorBundle.pc,
