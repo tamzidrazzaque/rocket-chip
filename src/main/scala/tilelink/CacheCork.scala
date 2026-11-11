@@ -19,7 +19,13 @@ import freechips.rocketchip.util.DataToAugmentedData
 
 case class TLCacheCorkParams(
   unsafe: Boolean = false,
-  sinkIds: Int = 8)
+  sinkIds: Int = 8,
+  // A Release is accepted only when its ReleaseAck fits in a queue (releaseAckQueue entries) that drains onto the
+  // inner D channel. By default refills (d_d) win that channel, so streaming refills starve the ReleaseAcks, the
+  // queue fills, Releases stall, and a cache whose misses release a victim before acquiring stalls its misses.
+  // releaseAckFirst puts the single-beat ReleaseAck ahead of refills.
+  releaseAckFirst: Boolean = false,
+  releaseAckQueue: Int = 2)
 
 class TLCacheCork(params: TLCacheCorkParams = TLCacheCorkParams())(implicit p: Parameters) extends LazyModule
 {
@@ -169,7 +175,10 @@ class TLCacheCork(params: TLCacheCorkParams = TLCacheCorkParams())(implicit p: P
 
         // Combine the sources of messages into the channels
         TLArbiter(TLArbiter.lowestIndexFirst)(out.a, (edgeOut.numBeats1(c_a.bits), c_a), (edgeOut.numBeats1(a_a.bits), a_a))
-        TLArbiter(TLArbiter.lowestIndexFirst)(in_d,  (edgeIn .numBeats1(d_d.bits), d_d), (0.U, Queue(c_d, 2)), (0.U, Queue(a_d, 2)))
+        if (params.releaseAckFirst)
+          TLArbiter(TLArbiter.lowestIndexFirst)(in_d, (0.U, Queue(c_d, params.releaseAckQueue)), (edgeIn.numBeats1(d_d.bits), d_d), (0.U, Queue(a_d, 2)))
+        else
+          TLArbiter(TLArbiter.lowestIndexFirst)(in_d, (edgeIn.numBeats1(d_d.bits), d_d), (0.U, Queue(c_d, params.releaseAckQueue)), (0.U, Queue(a_d, 2)))
 
         // Tie off unused ports
         in.b.valid := false.B
